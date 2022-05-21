@@ -33,7 +33,7 @@ headers = {
 }
 
 
-async def _attempt_1(session, soup: BeautifulSoup) -> bytes:
+async def _attempt_1(session, soup: BeautifulSoup) -> tuple[str, bytes]:
     pdf_link = (
         soup.find(text=lambda t: "Original poster PDF" in t)
         .parent.select_one("a")
@@ -43,10 +43,10 @@ async def _attempt_1(session, soup: BeautifulSoup) -> bytes:
     # HTTP agent: https://www.dfeh.ca.gov/wp-content/uploads/sites/32/2020/10/Workplace-Discrimination-Poster_ENG.pdf
     async with session.get(pdf_link) as r:
         assert r.ok, f"[4a] Failed for {r.url}"
-        return await r.read()
+        return pdf_link, await r.read()
 
 
-async def _attempt_2(session, soup: BeautifulSoup) -> bytes:
+async def _attempt_2(session, soup: BeautifulSoup) -> tuple[str, bytes]:
     link = soup.select_one("object iframe").attrs["src"]
     # Clean
     if link.startswith("/"):
@@ -56,21 +56,20 @@ async def _attempt_2(session, soup: BeautifulSoup) -> bytes:
     # Run
     async with session.get(link) as r:
         assert r.ok, f"[4b] Failed for {r.url}"
-        return await r.read()
+        return link, await r.read()
 
 
 async def get_pdf(session, state: str, text: str, original_url: str):
-    file = f"files/{state}/{original_url.split('/')[-1]}"
-    if await os.path.exists(file):
-        return
-
     soup = BeautifulSoup(text, "html.parser")
     errors = []
     for i, x in enumerate([_attempt_1, _attempt_2]):
         try:
-            r = await x(session, soup)
+            new_link, content = await x(session, soup)
+            file = f"files/{state}/{new_link.split('/')[-1]}"
+            if await os.path.exists(file):
+                return
             async with aiofiles.open(file, "wb") as f:
-                await f.write(r)
+                await f.write(content)
             break
         except BaseException as e:
             errors.append(f"Attempt {i} for {original_url}. Error:\n{e}")
